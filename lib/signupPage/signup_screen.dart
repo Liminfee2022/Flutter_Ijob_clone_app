@@ -1,9 +1,16 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:ijob_clone_app/services/global_methods.dart';
 import 'package:ijob_clone_app/services/global_variables.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 
 class SignUp extends StatefulWidget {
@@ -19,6 +26,7 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
 
   final _signUpFormKey = GlobalKey<FormState>();
   File? imageFile;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   final FocusNode _emailFocusNode = FocusNode();
   final FocusNode _passFocusNode = FocusNode();
@@ -27,6 +35,7 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
 
   bool _obscureText = true;
   bool _isLoading = false;
+  String? imageUrl;
 
   final TextEditingController _fullNameTextcontroller =
       TextEditingController(text: '');
@@ -42,6 +51,15 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
   @override
   void dispose() {
     _animationController.dispose();
+    _fullNameTextcontroller.dispose();
+    _emailTextcontroller.dispose();
+    _passTextcontroller.dispose();
+    _phoneNumberTextcontroller.dispose();
+    _locationTextcontroller.dispose();
+    _emailFocusNode.dispose();
+    _passFocusNode.dispose();
+    _phoneNumberFocusNode.dispose();
+    _positionCPFocusNode.dispose();
     super.dispose();
   }
 
@@ -74,7 +92,9 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
               mainAxisSize: MainAxisSize.min,
               children: [
                 InkWell(
-                  onTap: () {},
+                  onTap: () {
+                    _getFromCamera();
+                  },
                   child: Row(
                     children: [
                       Padding(
@@ -92,7 +112,9 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
                   ),
                 ),
                 InkWell(
-                  onTap: () {},
+                  onTap: () {
+                    _getFromGallery();
+                  },
                   child: Row(
                     children: [
                       Padding(
@@ -115,9 +137,78 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
         });
   }
 
-  void _getFromCamera() async
-  {
-    XFile? pickedFile = await ImagePicker().pickImage(source: ImageSource.camera);
+  void _getFromCamera() async {
+    XFile? pickedFile =
+        await ImagePicker().pickImage(source: ImageSource.camera);
+    _cropImage(pickedFile!.path);
+    Navigator.pop(context);
+  }
+
+  void _getFromGallery() async {
+    XFile? pickedFile =
+        await ImagePicker().pickImage(source: ImageSource.gallery);
+    _cropImage(pickedFile!.path);
+    Navigator.pop(context);
+  }
+
+  void _cropImage(filePath) async {
+    CroppedFile? croppedImage = await ImageCropper().cropImage(
+      sourcePath: filePath,
+      maxHeight: 1080,
+      maxWidth: 1080,
+    );
+
+    if (croppedImage != null) {
+      setState(() {
+        imageFile = File(croppedImage.path);
+      });
+    }
+  }
+
+  void _submitFormOnSignUp() async {
+    final isValid = _signUpFormKey.currentState!.validate();
+    print("object $isValid");
+    if (!isValid) {
+      if (imageFile == null) {
+        GlobalMethod.showErrorDialog(
+            error: 'Please pick an image', ctx: context);
+      }
+      return;
+    }
+    setState(() {
+      _isLoading = true;
+    });
+    try {
+      await _auth.createUserWithEmailAndPassword(
+          email: _emailTextcontroller.text.trim().toLowerCase(),
+          password: _passTextcontroller.text.trim());
+      final User? user = _auth.currentUser;
+      final _uid = user!.uid;
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child("userImages")
+          .child(_uid + '.jpg');
+      await ref.putFile(imageFile!);
+      imageUrl = await ref.getDownloadURL();
+      FirebaseFirestore.instance.collection('users').doc(_uid).set({
+        'id': _uid,
+        'name': _fullNameTextcontroller.text,
+        'email': _emailTextcontroller.text,
+        'userImage': imageUrl,
+        'phoneNumber': _phoneNumberTextcontroller.text,
+        'location': _locationTextcontroller.text,
+        'createdAt': Timestamp.now(),
+      });
+      Navigator.canPop(context) ? Navigator.pop(context) : null;
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      GlobalMethod.showErrorDialog(error: e.toString(), ctx: context);
+    }
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   @override
@@ -358,7 +449,9 @@ class _SignUpState extends State<SignUp> with TickerProviderStateMixin {
                                 ),
                               )
                             : MaterialButton(
-                                onPressed: () {},
+                                onPressed: () {
+                                  _submitFormOnSignUp();
+                                },
                                 color: Colors.cyan,
                                 elevation: 8,
                                 shape: RoundedRectangleBorder(
